@@ -700,6 +700,11 @@ impl<T: Config> Pallet<T> {
             .collect()
     }
 
+    #[allow(clippy::indexing_slicing)]
+    pub fn subtensor_epoch(netuid: u16) -> Vec<(T::AccountId, u64, u64)>  {
+        let rao_emission: u64 = Self::get_emission_value(netuid);
+        Self::epoch(netuid, rao_emission)
+    }
     pub fn get_float_rho(netuid: u16) -> I32F32 {
         I32F32::from_num(Self::get_rho(netuid))
     }

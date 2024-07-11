@@ -1604,6 +1604,12 @@ impl_runtime_apis! {
                 vec![]
             }
         }
+
+        fn get_subtensor_epoch(netuid: u16) -> Vec<u8> {
+            let result = SubtensorModule::subtensor_epoch(netuid);
+            result.encode()
+        }
+
     }
 
     impl subtensor_custom_rpc_runtime_api::StakeInfoRuntimeApi<Block> for Runtime {
