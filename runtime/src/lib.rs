@@ -1,6 +1,8 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 // `construct_runtime!` does a lot of recursion and requires us to increase the limit to 256.
 #![recursion_limit = "256"]
+// Some arithmetic operations can't use the saturating equivalent, such as the PerThing types
+#![allow(clippy::arithmetic_side_effects)]
 
 // Make the WASM binary available.
 #[cfg(feature = "std")]
@@ -96,7 +98,9 @@ pub type Nonce = u32;
 pub const fn deposit(items: u32, bytes: u32) -> Balance {
     pub const ITEMS_FEE: Balance = 2_000 * 10_000;
     pub const BYTES_FEE: Balance = 100 * 10_000;
-    items as Balance * ITEMS_FEE + bytes as Balance * BYTES_FEE
+    (items as Balance)
+        .saturating_mul(ITEMS_FEE)
+        .saturating_add((bytes as Balance).saturating_mul(BYTES_FEE))
 }
 
 // Opaque types. These are used by the CLI to instantiate machinery that don't need to know
@@ -135,7 +139,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     //   `spec_version`, and `authoring_version` are the same between Wasm and native.
     // This value is set to 100 to notify Polkadot-JS App (https://polkadot.js.org/apps) to use
     //   the compatible custom types.
-    spec_version: 154,
+    spec_version: 194,
     impl_version: 1,
     apis: RUNTIME_API_VERSIONS,
     transaction_version: 1,
@@ -289,7 +293,8 @@ parameter_types! {
     pub const DisallowPermissionlessExtendDuration: BlockNumber = 0;
 
     pub const RootEnterDuration: BlockNumber = 5 * 60 * 24; // 24 hours
-    pub const RootExtendDuration: BlockNumber = 5 * 60 * 3; // 3 hours
+
+    pub const RootExtendDuration: BlockNumber = 5 * 60 * 12; // 12 hours
 
     pub const DisallowPermissionlessEntering: Option<Balance> = None;
     pub const DisallowPermissionlessExtending: Option<Balance> = None;
@@ -302,9 +307,17 @@ impl Contains<RuntimeCall> for SafeModeWhitelistedCalls {
         matches!(
             call,
             RuntimeCall::Sudo(_)
+                | RuntimeCall::Multisig(_)
                 | RuntimeCall::System(_)
                 | RuntimeCall::SafeMode(_)
                 | RuntimeCall::Timestamp(_)
+                | RuntimeCall::SubtensorModule(
+                    pallet_subtensor::Call::schedule_coldkey_swap { .. }
+                        | pallet_subtensor::Call::set_weights { .. }
+                        | pallet_subtensor::Call::set_root_weights { .. }
+                        | pallet_subtensor::Call::serve_axon { .. }
+                )
+                | RuntimeCall::Commitments(pallet_commitments::Call::set_commitment { .. })
         )
     }
 }
@@ -705,7 +718,11 @@ impl PrivilegeCmp<OriginCaller> for OriginPrivilegeCmp {
                     r_yes_votes,
                     r_count,
                 )), // Equivalent to (l_yes_votes / l_count).cmp(&(r_yes_votes / r_count))
-            ) => Some((l_yes_votes * r_count).cmp(&(r_yes_votes * l_count))),
+            ) => Some(
+                l_yes_votes
+                    .saturating_mul(*r_count)
+                    .cmp(&r_yes_votes.saturating_mul(*l_count)),
+            ),
             // For every other origin we don't care, as they are not used for `ScheduleOrigin`.
             _ => None,
         }
@@ -860,6 +877,11 @@ parameter_types! {
     pub const SubtensorInitialNetworkLockReductionInterval: u64 = 14 * 7200;
     pub const SubtensorInitialNetworkRateLimit: u64 = 7200;
     pub const SubtensorInitialTargetStakesPerInterval: u16 = 1;
+    pub const SubtensorInitialHotkeySwapCost: u64 = 1_000_000_000;
+    pub const InitialAlphaHigh: u16 = 58982; // Represents 0.9 as per the production default
+    pub const InitialAlphaLow: u16 = 45875; // Represents 0.7 as per the production default
+    pub const InitialLiquidAlphaOn: bool = false; // Default value for LiquidAlphaOn
+    pub const SubtensorInitialBaseDifficulty: u64 = 10_000_000; // Base difficulty
 }
 
 impl pallet_subtensor::Config for Runtime {
@@ -911,6 +933,11 @@ impl pallet_subtensor::Config for Runtime {
     type InitialSubnetLimit = SubtensorInitialSubnetLimit;
     type InitialNetworkRateLimit = SubtensorInitialNetworkRateLimit;
     type InitialTargetStakesPerInterval = SubtensorInitialTargetStakesPerInterval;
+    type HotkeySwapCost = SubtensorInitialHotkeySwapCost;
+    type AlphaHigh = InitialAlphaHigh;
+    type AlphaLow = InitialAlphaLow;
+    type LiquidAlphaOn = InitialLiquidAlphaOn;
+    type InitialBaseDifficulty = SubtensorInitialBaseDifficulty;
 }
 
 use sp_runtime::BoundedVec;
@@ -1184,6 +1211,19 @@ impl
 
     fn set_commit_reveal_weights_enabled(netuid: u16, enabled: bool) {
         SubtensorModule::set_commit_reveal_weights_enabled(netuid, enabled);
+    }
+
+    fn set_liquid_alpha_enabled(netuid: u16, enabled: bool) {
+        SubtensorModule::set_liquid_alpha_enabled(netuid, enabled);
+    }
+
+    fn do_set_alpha_values(
+        origin: RuntimeOrigin,
+        netuid: u16,
+        alpha_low: u16,
+        alpha_high: u16,
+    ) -> Result<(), DispatchError> {
+        SubtensorModule::do_set_alpha_values(origin, netuid, alpha_low, alpha_high)
     }
 }
 
@@ -1505,6 +1545,7 @@ impl_runtime_apis! {
 
     #[cfg(feature = "try-runtime")]
     impl frame_try_runtime::TryRuntime<Block> for Runtime {
+        #[allow(clippy::unwrap_used)]
         fn on_runtime_upgrade(checks: frame_try_runtime::UpgradeCheckSelect) -> (Weight, Weight) {
             // NOTE: intentional unwrap: we don't want to propagate the error backwards, and want to
             // have a backtrace here. If any of the pre/post migration checks fail, we shall stop
@@ -1627,6 +1668,23 @@ impl_runtime_apis! {
     impl subtensor_custom_rpc_runtime_api::SubnetRegistrationRuntimeApi<Block> for Runtime {
         fn get_network_registration_cost() -> u64 {
             SubtensorModule::get_network_lock_cost()
+        }
+    }
+
+    impl subtensor_custom_rpc_runtime_api::ColdkeySwapRuntimeApi<Block> for Runtime {
+        fn get_scheduled_coldkey_swap( coldkey_account_vec: Vec<u8> ) -> Vec<u8> {
+            let result = SubtensorModule::get_scheduled_coldkey_swap( coldkey_account_vec );
+            result.encode()
+        }
+
+        fn get_remaining_arbitration_period( coldkey_account_vec: Vec<u8> ) -> Vec<u8> {
+            let result = SubtensorModule::get_remaining_arbitration_period( coldkey_account_vec );
+            result.encode()
+        }
+
+        fn get_coldkey_swap_destinations( coldkey_account_vec: Vec<u8> ) -> Vec<u8> {
+            let result = SubtensorModule::get_coldkey_swap_destinations( coldkey_account_vec );
+            result.encode()
         }
     }
 }
