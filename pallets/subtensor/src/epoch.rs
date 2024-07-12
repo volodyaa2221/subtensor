@@ -4,6 +4,8 @@ use frame_support::IterableStorageDoubleMap;
 use sp_std::vec;
 use substrate_fixed::types::{I32F32, I64F64, I96F32};
 
+const LOG_TARGET: &str = "epoch_debug_log";
+
 impl<T: Config> Pallet<T> {
     /// Calculates reward consensus and returns the emissions for uids/hotkeys in a given `netuid`.
     /// (Dense version used only for testing purposes.)
@@ -397,11 +399,11 @@ impl<T: Config> Pallet<T> {
         for (uid_i, hotkey) in &hotkeys {
             stake_64[*uid_i as usize] = I64F64::from_num(Self::get_total_stake_for_hotkey(hotkey));
         }
-        log::trace!("Stake : {:?}", &stake_64);
+        log::trace!(target: LOG_TARGET, "Stake : {:?}", &stake_64);
         inplace_normalize_64(&mut stake_64);
         let stake: Vec<I32F32> = vec_fixed64_to_fixed32(stake_64);
         // range: I32F32(0, 1)
-        log::trace!("Normalised Stake: {:?}", &stake);
+        log::trace!(target: LOG_TARGET, "Normalised Stake: {:?}", &stake);
 
         // =======================
         // == Validator permits ==
@@ -436,7 +438,7 @@ impl<T: Config> Pallet<T> {
 
         // Normalize active stake.
         inplace_normalize(&mut active_stake);
-        log::trace!("Active Stake:\n{:?}\n", &active_stake);
+        log::trace!(target: LOG_TARGET, "Active Stake:\n{:?}\n", &active_stake);
 
         // =============
         // == Weights ==
@@ -444,15 +446,15 @@ impl<T: Config> Pallet<T> {
 
         // Access network weights row unnormalized.
         let mut weights: Vec<Vec<(u16, I32F32)>> = Self::get_weights_sparse(netuid);
-        log::trace!("Weights: {:?}", &weights);
+        log::trace!(target: LOG_TARGET, "Weights: {:?}", &weights);
 
         // Mask weights that are not from permitted validators.
         weights = mask_rows_sparse(&validator_forbids, &weights);
-        log::trace!("Weights (permit): {:?}", &weights);
+        log::trace!(target: LOG_TARGET, "Weights (permit): {:?}", &weights);
 
         // Remove self-weight by masking diagonal.
         weights = mask_diag_sparse(&weights);
-        log::trace!("Weights (permit+diag): {:?}", &weights);
+        log::trace!(target: LOG_TARGET, "Weights (permit+diag): {:?}", &weights);
 
         // Remove weights referring to deregistered neurons.
         weights = vec_mask_sparse_matrix(
@@ -461,11 +463,11 @@ impl<T: Config> Pallet<T> {
             &block_at_registration,
             &|updated, registered| updated <= registered,
         );
-        log::trace!("Weights (permit+diag+outdate): {:?}", &weights);
+        log::trace!(target: LOG_TARGET, "Weights (permit+diag+outdate): {:?}", &weights);
 
         // Normalize remaining weights.
         inplace_row_normalize_sparse(&mut weights);
-        log::trace!("Weights (mask+norm): {:?}", &weights);
+        log::trace!(target: LOG_TARGET, "Weights (mask+norm): {:?}", &weights);
 
         // ================================
         // == Consensus, Validator Trust ==
@@ -478,10 +480,10 @@ impl<T: Config> Pallet<T> {
         // Clip weights at majority consensus
         let kappa: I32F32 = Self::get_float_kappa(netuid); // consensus majority ratio, e.g. 51%.
         let consensus: Vec<I32F32> = weighted_median_col_sparse(&active_stake, &weights, n, kappa);
-        log::trace!("Consensus: {:?}", &consensus);
+        log::trace!(target: LOG_TARGET, "Consensus: {:?}", &consensus);
 
         weights = col_clip_sparse(&weights, &consensus);
-        log::trace!("Weights: {:?}", &weights);
+        log::trace!(target: LOG_TARGET, "Weights: {:?}", &weights);
 
         let validator_trust: Vec<I32F32> = row_sum_sparse(&weights);
         log::trace!("Validator Trust: {:?}", &validator_trust);
@@ -492,7 +494,7 @@ impl<T: Config> Pallet<T> {
 
         // Compute ranks: r_j = SUM(i) w_ij * s_i.
         let mut ranks: Vec<I32F32> = matmul_sparse(&weights, &active_stake, n);
-        log::trace!("Ranks (after): {:?}", &ranks);
+        log::trace!(target: LOG_TARGET, "Ranks (after): {:?}", &ranks);
 
         // Compute server trust: ratio of rank after vs. rank before.
         let trust: Vec<I32F32> = vecdiv(&ranks, &preranks); // range: I32F32(0, 1)
@@ -500,7 +502,7 @@ impl<T: Config> Pallet<T> {
 
         inplace_normalize(&mut ranks); // range: I32F32(0, 1)
         let incentive: Vec<I32F32> = ranks.clone();
-        log::trace!("Incentive (=Rank): {:?}", &incentive);
+        log::trace!(target: LOG_TARGET, "Incentive (=Rank): {:?}", &incentive);
 
         // =========================
         // == Bonds and Dividends ==
@@ -508,7 +510,7 @@ impl<T: Config> Pallet<T> {
 
         // Access network bonds.
         let mut bonds: Vec<Vec<(u16, I32F32)>> = Self::get_bonds_sparse(netuid);
-        log::trace!("B: {:?}", &bonds);
+        log::trace!(target: LOG_TARGET, "B: {:?}", &bonds);
 
         // Remove bonds referring to deregistered neurons.
         bonds = vec_mask_sparse_matrix(
@@ -517,32 +519,32 @@ impl<T: Config> Pallet<T> {
             &block_at_registration,
             &|updated, registered| updated <= registered,
         );
-        log::trace!("B (outdatedmask): {:?}", &bonds);
+        log::trace!(target: LOG_TARGET, "B (outdatedmask): {:?}", &bonds);
 
         // Normalize remaining bonds: sum_i b_ij = 1.
         inplace_col_normalize_sparse(&mut bonds, n);
-        log::trace!("B (mask+norm): {:?}", &bonds);
+        log::trace!(target: LOG_TARGET, "B (mask+norm): {:?}", &bonds);
 
         // Compute bonds delta column normalized.
         let mut bonds_delta: Vec<Vec<(u16, I32F32)>> = row_hadamard_sparse(&weights, &active_stake); // ΔB = W◦S (outdated W masked)
-        log::trace!("ΔB: {:?}", &bonds_delta);
+        log::trace!(target: LOG_TARGET, "ΔB: {:?}", &bonds_delta);
 
         // Normalize bonds delta.
         inplace_col_normalize_sparse(&mut bonds_delta, n); // sum_i b_ij = 1
-        log::trace!("ΔB (norm): {:?}", &bonds_delta);
+        log::trace!(target: LOG_TARGET, "ΔB (norm): {:?}", &bonds_delta);
 
         // Compute the Exponential Moving Average (EMA) of bonds.
         let mut ema_bonds =
             Self::compute_ema_bonds_sparse(netuid, consensus.clone(), bonds_delta, bonds);
         // Normalize EMA bonds.
         inplace_col_normalize_sparse(&mut ema_bonds, n); // sum_i b_ij = 1
-        log::trace!("Exponential Moving Average Bonds: {:?}", &ema_bonds);
+        log::trace!(target: LOG_TARGET, "Exponential Moving Average Bonds: {:?}", &ema_bonds);
 
         // Compute dividends: d_i = SUM(j) b_ij * inc_j.
         // range: I32F32(0, 1)
         let mut dividends: Vec<I32F32> = matmul_transpose_sparse(&ema_bonds, &incentive);
         inplace_normalize(&mut dividends);
-        log::trace!("Dividends: {:?}", &dividends);
+        log::trace!(target: LOG_TARGET, "Dividends: {:?}", &dividends);
 
         // =================================
         // == Emission and Pruning scores ==
