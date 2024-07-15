@@ -1,6 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 extern crate alloc;
 use alloc::vec::Vec;
+use substrate_fixed::types::I32F32;
 
 // Here we declare the runtime API. It is implemented it the `impl` block in
 // src/neuron_info.rs, src/subnet_info.rs, and src/delegate_info.rs
@@ -31,5 +32,9 @@ sp_api::decl_runtime_apis! {
 
     pub trait SubnetRegistrationRuntimeApi {
         fn get_network_registration_cost() -> u64;
+    }
+
+    pub trait SubtensorEpochRuntimeApi {
+        fn get_subtensor_epoch(netuid: u16, incentive: Option<bool>)->Vec<I32F32>;
     }
 }

@@ -23,7 +23,7 @@ sp-api = { workspace = true }
 sp-blockchain = { workspace = true }
 sp-rpc = { workspace = true }
 sp-runtime = { workspace = true }
-
+substrate-fixed = { workspace = true }
 # local packages
 
 subtensor-custom-rpc-runtime-api = { version = "0.0.2", path = "../runtime-api", default-features = false }

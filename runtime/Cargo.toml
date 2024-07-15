@@ -53,7 +53,7 @@ sp-session = { workspace = true }
 sp-std = { workspace = true }
 sp-transaction-pool = { workspace = true }
 sp-version = { workspace = true }
-
+substrate-fixed = { workspace = true }
 # Temporary sudo
 pallet-sudo = { workspace = true }
 

@@ -15,7 +15,7 @@ workspace = true
 sp-api = { workspace = true }
 frame-support = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-
+substrate-fixed = { workspace = true }
 # local
 pallet-subtensor = { version = "4.0.0-dev", path = "../../subtensor", default-features = false }
 

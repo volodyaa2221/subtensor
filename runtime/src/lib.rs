@@ -37,6 +37,8 @@ use sp_runtime::{
 };
 use sp_std::cmp::Ordering;
 use sp_std::prelude::*;
+use substrate_fixed::types::I32F32;
+
 #[cfg(feature = "std")]
 use sp_version::NativeVersion;
 use sp_version::RuntimeVersion;
@@ -1579,6 +1581,13 @@ impl_runtime_apis! {
             SubtensorModule::get_network_lock_cost()
         }
     }
+
+    impl subtensor_custom_rpc_runtime_api::SubtensorEpochRuntimeApi<Block> for Runtime {
+        fn get_subtensor_epoch(netuid: u16, incentive: Option<bool>)->Vec<I32F32> {
+            let result = SubtensorModule::subtensor_epoch(netuid, incentive);
+            result.to_subtensor_epoch_result()
+        }
+    }    
 }
 
 // #[cfg(test)]
